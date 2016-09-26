@@ -135,7 +135,8 @@ class CLikeNestingStackStates(CodeStateMachine):
         if token == "template":
             self._state = self._template_declaration
 
-        elif token in ("struct", "class", "namespace"):
+        elif (token in ("struct", "class", "namespace") and
+              self.last_token != "."):
             self._state = self._read_namespace
 
         elif token == "{":
