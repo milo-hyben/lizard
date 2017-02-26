@@ -88,50 +88,69 @@ class CLikeNestingStackStates(CodeStateMachine):
     The handling of these complex cases is unspecified and can be ignored.
     """
 
-    # Beasts that can be defined within one line without braces.
-    __braceless_structures = set(['if', 'else', 'for', 'while', 'do',
-                                  'switch'])
-    __paren_count = 0  # Used only to tackle the beasts.
-    __braceless = None  # Applies only to the beasts.
-    __structure_brace_stack = []  # Boolean stack for structures' brace states.
+    __structures = set(["if", "else", "for", "while", "do", "switch",
+                        "try", "catch"])
+    # Structures paired on the same nesting level.
+    __paired_structures = {"if": "else", "try": "catch", "catch": "catch",
+                           "do": "while"}
+    __wait_for_pair = False  # Wait for the pair structure to close the level.
+    __structure_brace_stack = []  # Structure and brace states.
 
-    def __pop_braceless_structures(self):
-        """Pops structures up to the one with braces."""
-        self.context.pop_nesting()
-        is_structure = None
-        if self.__structure_brace_stack:
-            is_structure = self.__structure_brace_stack.pop()
-
-        while (is_structure is not None and self.__structure_brace_stack and
-                self.__structure_brace_stack[-1]):
-            self.__structure_brace_stack.pop()
+    def __pop_without_pair(self):
+        """Continue poping nesting levels without the pair."""
+        self.__wait_for_pair = False
+        while (self.__structure_brace_stack and
+               self.__structure_brace_stack[-1]):
+            structure = self.__structure_brace_stack.pop()
             self.context.pop_nesting()
+            if structure in self.__paired_structures:
+                self.__wait_for_pair = self.__paired_structures[structure]
+                return
+
+    def __pop_structures(self):
+        """Pops structures up to the one with braces or a waiting pair."""
+        self.context.pop_nesting()
+        structure = None
+        if self.__structure_brace_stack:
+            structure = self.__structure_brace_stack.pop()
+
+        if structure is None:
+            return
+        if structure in self.__paired_structures:
+            self.__wait_for_pair = self.__paired_structures[structure]
+            return
+        self.__pop_without_pair()
 
     def __else_if_structure(self, token):
         """Handles possible compound 'else if' after 'else' token."""
         self._state = self.__declare_structure
-        if token != "if":
+        if token == "if":
+            self.__structure_brace_stack[-1] = "if"
+        else:
             self._state(token)
 
+    @CodeStateMachine.read_inside_brackets_then("()")
     def __declare_structure(self, token):
         """Ignores structures between parentheses on structure declaration."""
-        if token == "(":
-            self.__paren_count += 1
-        elif token == ")":
-            # assert self.__paren_count > 0
-            self.__paren_count -= 1
-        elif self.__paren_count == 0:
-            self._state = self._state_global
-            if token == "{":
-                self.__braceless = False
-            else:
-                self.__braceless = True
-                self.context.add_bare_nesting()
-                self.__structure_brace_stack.append(True)
+        self.context.add_bare_nesting()
+        self._state = self._state_structure
+        if token != ")":
+            self._state(token)
+
+    def _state_structure(self, token):
+        """Control-flow structure states right before the body."""
+        self._state = self._state_global
+        if token == "{":
+            self.context.add_bare_nesting()
+            self.__structure_brace_stack.append(False)
+        else:
             self._state(token)
 
     def _state_global(self, token):
         """Dual-purpose state for global and structure bodies."""
+        while self.__wait_for_pair and token != self.__wait_for_pair:
+            self.__pop_without_pair()
+
         if token == "template":
             self._state = self._template_declaration
 
@@ -141,31 +160,44 @@ class CLikeNestingStackStates(CodeStateMachine):
 
         elif token == "{":
             self.context.add_bare_nesting()
-            self.__structure_brace_stack.append(self.__braceless)
-            self.__braceless = None
+            self.__structure_brace_stack.append(None)  # Non-structure braces.
 
         elif token == '}' or (token == ";" and self.__structure_brace_stack and
                               self.__structure_brace_stack[-1]):
-            self.__braceless = None
-            self.__pop_braceless_structures()
+            self.__pop_structures()
 
-        elif token in self.__braceless_structures:
-            # assert self.__paren_count == 0
+        elif token in self.__structures:
+            self.__wait_for_pair = False
+            self.__structure_brace_stack.append(token)
             if token == "else":
                 self._state = self.__else_if_structure
             else:
                 self._state = self.__declare_structure
 
+    def _read_namespace(self, token):
+        """Processes declarations right after namespace/class keywords."""
+        if token == "[":
+            self._state = self._read_attribute
+        else:
+            self._state = self._read_namespace_name
+        self._state(token)
+
     @CodeStateMachine.read_until_then(')({;')
-    def _read_namespace(self, token, saved):
+    def _read_namespace_name(self, token, saved):
+        """Processes namespace/class/struct names from declrations."""
         self._state = self._state_global
         if token == "{":
             self.context.add_namespace(''.join(itertools.takewhile(
-                lambda x: x not in [":", "final"], saved)))
+                lambda x: x not in [":", "final", "["], saved)))
 
     @CodeStateMachine.read_inside_brackets_then("<>", "_state_global")
     def _template_declaration(self, _):
         """Ignores template parameters."""
+        pass
+
+    @CodeStateMachine.read_inside_brackets_then("[]", "_read_namespace")
+    def _read_attribute(self, _):
+        """Ignores C++11 attributes inside [[ ]]."""
         pass
 
 
@@ -236,12 +268,14 @@ class CLikeStates(CodeStateMachine):
         self.context.add_to_long_function_name(token)
 
     def _state_dec_to_imp(self, token):
-        if token == 'const' or token == 'noexcept':
+        if token in ('const', '&', '&&'):
             self.context.add_to_long_function_name(" " + token)
         elif token == 'throw':
             self._state = self._state_throw
         elif token == '->':
             self._state = self._state_trailing_return
+        elif token == 'noexcept':
+            self._state = self._state_noexcept
         elif token == '(':
             long_name = self.context.current_function.long_name
             self.try_new_function(long_name)
@@ -250,6 +284,9 @@ class CLikeStates(CodeStateMachine):
             self.next(self._state_entering_imp, "{")
         elif token == ":":
             self._state = self._state_initialization_list
+        elif token == "[":
+            self._state = self._state_attribute
+            self._state(token)
         elif not (token[0].isalpha() or token[0] == '_'):
             self._state = self._state_global
             self._state(token)
@@ -257,9 +294,16 @@ class CLikeStates(CodeStateMachine):
             self._state = self._state_old_c_params
             self._saved_tokens = [token]
 
-    def _state_throw(self, token):
-        if token == ')':
+    @CodeStateMachine.read_inside_brackets_then("()")
+    def _state_throw(self, _):
+        self._state = self._state_dec_to_imp
+
+    def _state_noexcept(self, token):
+        if token == '(':
+            self._state = self._state_throw
+        else:
             self._state = self._state_dec_to_imp
+        self._state(token)
 
     @CodeStateMachine.read_until_then(';{')
     def _state_trailing_return(self, token, _):
@@ -312,3 +356,8 @@ class CLikeStates(CodeStateMachine):
     @CodeStateMachine.read_inside_brackets_then("{}")
     def _state_imp(self, _):
         self._state = self._state_global
+
+    @CodeStateMachine.read_inside_brackets_then("[]", "_state_dec_to_imp")
+    def _state_attribute(self, _):
+        "Ignores function attributes with C++11 syntax, i.e., [[ attribute ]]."
+        pass

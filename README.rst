@@ -1,16 +1,19 @@
-Lizard
-======
+|Web Site| Lizard
+=================
 
-An extensible Cyclomatic Complexity Analyzer for many programming languages
-including C/C++ (doesn't require all the header files).
+.. image:: https://travis-ci.org/terryyin/lizard.png?branch=master
+    :target: https://travis-ci.org/terryyin/lizard
+.. image:: https://badge.fury.io/py/lizard.svg
+    :target: https://badge.fury.io/py/lizard
+.. |Web Site| image:: http://www.lizard.ws/website/static/img/logo-small.png
+    :target: http://www.lizard.ws
 
-|Build Status|
-|Pypi Badge|
+|
 
-Visit the tool website |Web Site|
+Lizard is an extensible Cyclomatic Complexity Analyzer for many imperative programming languages
+including C/C++ (doesn't require all the header files or Java imports).
 
-lizard is a simple code complexity analyzer without caring about the
-C/C++ header files or Java imports. It can deal with
+A list of supported languages:
 
 -  C/C++ (works with C++14)
 -  Java
@@ -23,9 +26,10 @@ C/C++ header files or Java imports. It can deal with
 -  TTCN-3
 -  PHP
 -  Scala
+-  GDScript
 
-By default lizard will search for any source code that it knows an mix
-all the result together. This might not be what you want. You can use
+By default lizard will search for any source code that it knows and mix
+all the results together. This might not be what you want. You can use
 the "-l" option to select language(s).
 
 It counts
@@ -40,7 +44,7 @@ Functions that exceed these limitations will generate warnings. The exit
 code of lizard will be none-Zero if there are warnings.
 
 This tool actually calculates how complex the code 'looks' rather than
-how complex the code real 'is'. People will need this tool because it's
+how complex the code really 'is'. People will need this tool because it's
 often very hard to get all the included folders and files right when
 they are complicated. But we don't really need that kind of accuracy for
 cyclomatic complexity.
@@ -69,14 +73,14 @@ Or if you've got the source:
 
 ::
 
-   [sudo] python setup.py install
+   [sudo] python setup.py install --install-dir=/path/to/installation/directory/
 
 Usage
 -----
 
 ::
 
-   lizard [options] [PATH or FILE] [PATH] ... 
+   lizard [options] [PATH or FILE] [PATH] ...
 
 Run for the code under current folder (recursively):
 
@@ -179,7 +183,7 @@ Analyze a folder recursively: lizard mahjong\_game/src
    ======================================
        66     19    247      1    accept_request@64@./httpd.c
    =================================================================================
-   Total NLOC  Avg.NLOC  Avg CCN  Avg token  Fun Cnt  Warning cnt   Fun Rt   NLOC Rt  
+   Total NLOC  Avg.NLOC  Avg CCN  Avg token  Fun Cnt  Warning cnt   Fun Rt   NLOC Rt
    --------------------------------------------------------------------------------
           554        20     4.07      71.15       27            1      0.04    0.12
 
@@ -238,8 +242,8 @@ Whitelist
 
 If for some reason you would like to ignore the warnings, you can use
 the whitelist. Add 'whitelizard.txt' to the current folder (or use -W to point to the whitelist file), then the
-functions defined in the file will be ignored. Please notice that if you assign the file pathname, it need to
-be exactly the same relative path as Lizard find the file. An easy way to get the file pathname is copy it from
+functions defined in the file will be ignored. Please notice that if you assign the file pathname, it needs to
+be exactly the same relative path as Lizard to find the file. An easy way to get the file pathname is to copy it from
 the Lizard warning output.
 This is an example whitelist:
 
@@ -265,31 +269,36 @@ before a function it will suppress the warning for that function.
        ...
    }
 
-Change Logs
+
+Limitations
 -----------
--  2016.04.2 Support PHP.
--  2016.03.26 Support C#.
--  2016.02.2 Add option -EMcCabe for ignoring fall-through swith/cases, thanks to @@vicgonzalez
--  2016.01.31 Add support for Ruby
--  2016.01.29 Add -T option to set limit for any field
--  2015.12.17 Add support for Swift
--  2015.12.12 Add the -l option to filter language
--  2015.10.22 TTCN-3 added by @gustafj
--  2015.10.06 Add C++11 uniform constructor initialization. Thanks to @rakhimov
--  2015.01.09 Add C preprocessor back by -Ecpre. it will ignore all the #else branch in the C/C++ code.
--  2015.01.07 pass test for linux kernal and other popular open source C/C++ code.
--  2014.04.07 Remove option -e (display function end line), and make it default
--  2014.04.06 Remove option -d (ignore duplicated content), and make it default
--  2014.04.06 Remove option -p (no preprocessor count), and a '#if' will always be counted in cyclomatic complexity
--  2014.03.31 Support JavaScript!
--  2014.03.22 Change the -v (--verbose) option to -V. This is because -v
-   will be used for --version.
 
-.. |Build Status| image:: https://travis-ci.org/terryyin/lizard.png?branch=master
-   :target: https://travis-ci.org/terryyin/lizard
+Lizard requires syntactically correct code.
+Upon processing input with incorrect or unknown syntax:
 
-.. |Pypi Badge| image:: https://badge.fury.io/py/lizard.svg
-    :target: https://badge.fury.io/py/lizard
+- Lizard guarantees to terminate eventually (i.e., no forever loops, hangs)
+  without hard failures (e.g., exit, crash, exceptions).
 
-.. |Web Site| image:: http://www.lizard.ws/website/static/img/logo-small.png
-   :target: http://www.lizard.ws
+- There is a chance of a combination of the following soft failures:
+
+    - omission
+    - misinterpretation
+    - improper analysis / tally
+    - success (the code under consideration is not relevant, e.g., global macros in C)
+
+This approach makes the Lizard implementation
+simpler and more focused with partial parsers for various languages.
+Developers of Lizard attempt to minimize the possibility of soft failures.
+Hard failures are bugs in Lizard code,
+while soft failures are trade-offs or potential bugs.
+
+In addition to asserting the correct code,
+Lizard may choose not to deal with some advanced or complicated language features:
+
+- C/C++ digraphs and trigraphs are not recognized.
+- C/C++ preprocessing or macro expansion is not performed.
+  For example, using macro instead of parentheses (or partial statements in macros)
+  can confuse Lizard's bracket stacks.
+- Some C++ complicated templates may cause confusion with matching angle brackets
+  and processing less-than ``<`` or more-than ``>`` operators
+  inside of template arguments.

@@ -43,7 +43,7 @@ try:
 except ImportError:
     pass
 
-VERSION = "1.12.6"
+VERSION = "1.12.10"
 
 DEFAULT_CCN_THRESHOLD, DEFAULT_WHITELIST, \
     DEFAULT_MAX_FUNC_LENGTH = 15, "whitelizard.txt", 1000
@@ -142,11 +142,22 @@ def arg_parser(prog=None):
                         action="store_const",
                         const=print_clang_style_warning,
                         dest="printer")
+    parser.add_argument("--warning-msvs",
+                        help='''Show warnings only, using Visual Studio's
+                        warning format for printing warnings.
+                        https://msdn.microsoft.com/en-us/library/yxkt8b26.aspx
+                        ''',
+                        action="store_const",
+                        const=print_msvs_style_warning,
+                        dest="printer")
     parser.add_argument("-i", "--ignore_warnings",
                         help='''If the number of warnings is equal or less
-                        than the number,
-                        the tool will exit normally, otherwise it will generate
-                        error. Useful in makefile for legacy code.''',
+                        than the number, the tool will exit normally;
+                        otherwise, it will generate error.
+                        If the number is negative,
+                        the tool exits normally
+                        regardless of the number of warnings.
+                        Useful in makefile for legacy code.''',
                         type=int,
                         dest="number",
                         default=0)
@@ -672,6 +683,15 @@ class OutputScheme(object):
                 for e in self.items[:-1]
                 ]))
 
+    def msvs_warning_format(self):
+        return (
+            "{f.filename}({f.start_line}): warning: {f.name} has " +
+            ", ".join([
+                "{{f.{ext[value]}}} {caption}"
+                .format(ext=e, caption=e['caption'].strip())
+                for e in self.items[:-1]
+                ]))
+
 
 def print_warnings(option, scheme, warnings):
     warning_count = 0
@@ -679,13 +699,23 @@ def print_warnings(option, scheme, warnings):
     warn_str = "!!!! Warnings ({0}) !!!!".format(
         ' or '.join("{0} > {1}".format(
             k, val) for k, val in option.thresholds.items()))
-    print("\n" + "=" * len(warn_str) + "\n" + warn_str)
-    print(scheme.function_info_head())
     for warning in warnings:
+        if warning_count == 0:
+            print("\n" + "=" * len(warn_str) + "\n" + warn_str)
+            print(scheme.function_info_head())
         warning_count += 1
         warning_nloc += warning.nloc
         print(scheme.function_info(warning))
+    if warning_count == 0:
+        print_no_warnings(option)
     return warning_count, warning_nloc
+
+
+def print_no_warnings(option):
+    warn_str = "No thresholds exceeded ({0})".format(
+        ' or '.join("{0} > {1}".format(
+            k, val) for k, val in option.thresholds.items()))
+    print("\n" + "=" * len(warn_str) + "\n" + warn_str)
 
 
 def print_total(warning_count, warning_nloc, saved_result, scheme):
@@ -781,6 +811,14 @@ def print_clang_style_warning(code_infos, option, scheme):
     count = 0
     for warning in get_warnings(code_infos, option):
         print(scheme.clang_warning_format().format(f=warning))
+        count += 1
+    return count
+
+
+def print_msvs_style_warning(code_infos, option, scheme):
+    count = 0
+    for warning in get_warnings(code_infos, option):
+        print(scheme.msvs_warning_format().format(f=warning))
         count += 1
     return count
 
@@ -915,8 +953,13 @@ def get_extensions(extension_names):
 analyze_file = FileAnalyzer(get_extensions([]))  # pylint: disable=C0103
 
 
-def lizard_main(argv):
-    options = parse_args(argv)
+def main(argv=None):
+    """Command-line entrance to Lizard.
+
+    Args:
+        argv: Arguments vector; if None, sys.argv by default.
+    """
+    options = parse_args(argv or sys.argv)
     printer = options.printer or print_result
     schema = OutputScheme(options.extensions)
     if schema.any_silent():
@@ -932,9 +975,9 @@ def lizard_main(argv):
         options.languages,
         regression=schema.any_regression())
     warning_count = printer(result, options, schema)
-    if options.number < warning_count:
+    if 0 <= options.number < warning_count:
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    lizard_main(sys.argv)
+    main()

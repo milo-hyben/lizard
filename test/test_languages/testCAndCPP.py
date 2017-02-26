@@ -127,11 +127,25 @@ class Test_c_cpp_lizard(unittest.TestCase):
         self.assertEqual("abc::fun", result[0].name)
         self.assertEqual("abc::fun() const", result[0].long_name)
 
+    def test_one_function_with_throw(self):
+        result = get_cpp_function_list("""int fun() throw() {}""")
+        self.assertEqual(1, len(result))
+        self.assertEqual('fun', result[0].name)
+        result = get_cpp_function_list("""int fun() throw(Exception) {}""")
+        self.assertEqual(1, len(result))
+        self.assertEqual('fun', result[0].name)
+
     def test_one_function_with_noexcept(self):
         result = get_cpp_function_list("int abc::fun()noexcept{}")
         self.assertEqual(1, len(result))
         self.assertEqual("abc::fun", result[0].name)
-        self.assertEqual("abc::fun() noexcept", result[0].long_name)
+        result = get_cpp_function_list("int fun() noexcept(true) {}")
+        self.assertEqual(1, len(result))
+        self.assertEqual('fun', result[0].name)
+        result = get_cpp_function_list(
+                "int fun() noexcept(noexcept(foo()) && noexcept(Bar())) {}")
+        self.assertEqual(1, len(result))
+        self.assertEqual('fun', result[0].name)
 
     def test_one_function_in_class(self):
         result = get_cpp_function_list("class c {~c(){}}; int d(){}")
@@ -432,6 +446,79 @@ class Test_c_cpp_lizard(unittest.TestCase):
         self.assertEqual(1, len(result))
         self.assertEqual("foo", result[0].name)
 
+    def test_ref_qualifiers(self):
+        """C++11 ref qualifiers for member functions."""
+        result = get_cpp_function_list("struct A { void foo() & {} };")
+        self.assertEqual(1, len(result))
+        self.assertEqual("A::foo", result[0].name)
+        result = get_cpp_function_list("struct A { void foo() const & {} };")
+        self.assertEqual(1, len(result))
+        self.assertEqual("A::foo", result[0].name)
+        result = get_cpp_function_list("struct A { void foo() && {} };")
+        self.assertEqual(1, len(result))
+        self.assertEqual("A::foo", result[0].name)
+        result = get_cpp_function_list("struct A { void foo() const && {} };")
+        self.assertEqual(1, len(result))
+        self.assertEqual("A::foo", result[0].name)
+
+
+class Test_cpp11_Attributes(unittest.TestCase):
+    """C++11 extendable attributes can appear pretty much anywhere."""
+
+    def test_namespace(self):
+        result = get_cpp_function_list(
+            "namespace [[visibility(hidden)]] ns { void foo() {} }")
+        self.assertEqual(1, len(result))
+        self.assertEqual("ns::foo", result[0].name)
+        result = get_cpp_function_list(
+            "namespace ns [[deprecated]] { void foo() {} }")
+        self.assertEqual(1, len(result))
+        self.assertEqual("ns::foo", result[0].name)
+
+    def test_class(self):
+        result = get_cpp_function_list(
+            "struct [[alignas(8)]] A { void foo() {} };")
+        self.assertEqual(1, len(result))
+        self.assertEqual("A::foo", result[0].name)
+        result = get_cpp_function_list(
+            "struct A [[deprecated]] { void foo() {} };")
+        self.assertEqual(1, len(result))
+        self.assertEqual("A::foo", result[0].name)
+
+    def test_function(self):
+        result = get_cpp_function_list("void foo() [[noreturn]] {}")
+        self.assertEqual(1, len(result))
+        self.assertEqual("foo", result[0].name)
+
+    def test_function_parameters(self):
+        result = get_cpp_function_list("void foo(int a [[unused]]) {}")
+        self.assertEqual(1, len(result))
+        self.assertEqual("foo", result[0].name)
+        result = get_cpp_function_list("void foo(int a [[unused]], int b) {}")
+        self.assertEqual(1, len(result))
+        self.assertEqual("foo", result[0].name)
+        result = get_cpp_function_list("void foo(int b, int a [[unused]]) {}")
+        self.assertEqual(1, len(result))
+        self.assertEqual("foo", result[0].name)
+
+    def test_function_return_type(self):
+        result = get_cpp_function_list(
+            "int [[warn_unused_result]] foo(int a) {}")
+        self.assertEqual(1, len(result))
+        self.assertEqual("foo", result[0].name)
+
+    def test_control_structures(self):
+        result = get_cpp_function_list(
+            "int foo() { [[likely(true)]] if (a) return 1; else return 2; }")
+        self.assertEqual(1, len(result))
+        self.assertEqual(2, result[0].cyclomatic_complexity)
+        result = get_cpp_function_list(
+            """int foo() {
+                 for [[omp::parallel()]] (int i{}; i < n; ++i)
+                   sum += i; }""")
+        self.assertEqual(1, len(result))
+        self.assertEqual(2, result[0].cyclomatic_complexity)
+
 
 class Test_Preprocessing(unittest.TestCase):
 
@@ -467,3 +554,25 @@ class Test_Big(unittest.TestCase):
         code = "foo<y () >> 5> r;"
         result = get_cpp_function_list(code)
         self.assertEqual(0, len(result))
+
+
+class Test_Dialects(unittest.TestCase):
+
+    def test_cuda_kernel_launch(self):
+        """Special triple < and > for Nvidia CUDA C/C++ code."""
+        result = get_cpp_function_list('''void foo() {
+                kernel <<< gridDim, blockDim, 0 >>> (d_data, height, width);
+                }''')
+        self.assertEqual(1, len(result))
+        self.assertEqual("foo", result[0].name)
+        self.assertEqual(1, result[0].cyclomatic_complexity)
+        result = get_cpp_function_list('''void foo() {
+                kernel <<< gridDim, blockDim, (bar ? 0 : 1) >>> (x, y, z);
+                }''')
+        self.assertEqual(1, len(result))
+        self.assertEqual(2, result[0].cyclomatic_complexity)
+        result = get_cpp_function_list('''void foo() {
+                kernel <<< gridDim, blockDim, 0 >>> (x, y, (bar ? w : z));
+                }''')
+        self.assertEqual(1, len(result))
+        self.assertEqual(2, result[0].cyclomatic_complexity)
